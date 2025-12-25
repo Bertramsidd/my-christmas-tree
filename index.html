@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Smaller Apple Background Tree</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #050505;
+            overflow: hidden;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            width: 80%;
+            max-width: 400px;
+            text-align: center;
+            background: rgba(20, 20, 20, 0.6);
+            backdrop-filter: blur(12px);
+            padding: 24px;
+            border-radius: 24px;
+            border: 1px solid rgba(255, 215, 0, 0.2);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+        }
+
+        .label {
+            color: #FFD700;
+            font-size: 14px;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            font-weight: 700;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 20px;
+            width: 20px;
+            border-radius: 50%;
+            background: #FFD700;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.8);
+            cursor: pointer;
+            margin-top: -8px;
+            transition: transform 0.1s;
+            border: 2px solid #FFF;
+        }
+
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.3);
+        }
+
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+
+        input[type=range]:focus {
+            outline: none;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "three": "https://esm.sh/three@0.160.0",
+            "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.14?external=react,react-dom,three",
+            "@react-three/drei": "https://esm.sh/@react-three/drei@9.96.1?external=react,react-dom,three,@react-three/fiber",
+            "uuid": "https://esm.sh/uuid@9.0.1"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+
+<body>
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div class="label">Magic Slider</div>
+        <input type="range" id="explode-slider" min="0" max="1" step="0.001" value="0">
+    </div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import * as THREE from 'three';
+        import { Canvas, useFrame } from '@react-three/fiber';
+        import { OrbitControls, Environment, PerspectiveCamera, Sparkles, Float } from '@react-three/drei';
+
+        // --- 1. 背景图案相关逻辑 ---
+        const createCircleTexture = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.3, 'rgba(255,255,255,0.8)');
+            gradient.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = gradient; ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        };
+
+        // 苹果的轮廓路径点
+        const appleShapePath = [
+            [0, -0.8], [-0.2, -0.85], [-0.5, -0.8], [-0.75, -0.6], [-0.9, -0.3], [-0.95, 0.1],
+            [-0.85, 0.5], [-0.6, 0.8], [-0.3, 0.9], [-0.1, 0.85], [0, 0.75],
+            [0.02, 0.95], [0.05, 1.15], [0.1, 1.25],
+            [0.1, 0.85], [0.3, 0.9], [0.6, 0.8], [0.85, 0.5],
+            [0.95, 0.1], [0.9, -0.3], [0.75, -0.6], [0.5, -0.8], [0.2, -0.85],
+            [0, -0.8]
+        ];
+
+        const generateApplePointsGeo = (count, spreadZ) => {
+            const points = new Float32Array(count * 3);
+            for (let i = 0; i < count; i++) {
+                const pathPoint = appleShapePath[Math.floor(Math.random() * appleShapePath.length)];
+                const jitterX = (Math.random() - 0.5) * 0.15;
+                const jitterY = (Math.random() - 0.5) * 0.15;
+                const jitterZ = (Math.random() - 0.5) * spreadZ;
+                points[i * 3] = pathPoint[0] + jitterX;
+                points[i * 3 + 1] = pathPoint[1] + jitterY;
+                points[i * 3 + 2] = jitterZ;
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(points, 3));
+            return geo;
+        }
+
+        const LightPointFigure = ({ position, color, scale, count }) => {
+            const circleTex = useMemo(() => createCircleTexture(), []);
+            const geo = useMemo(() => generateApplePointsGeo(count, 0.5), [count]);
+            const material = useMemo(() => new THREE.PointsMaterial({
+                color: new THREE.Color(color),
+                map: circleTex,
+                size: 0.5,
+                sizeAttenuation: true,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+            }), [color, circleTex]);
+
+            return (
+                <Float speed={0.5} rotationIntensity={0.1} floatIntensity={0.2}>
+                    <points geometry={geo} material={material} position={position} scale={scale} />
+                </Float>
+            );
+        }
+
+        // --- 2. 纹理生成 ---
+        const createPineTexture = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512; const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, 512, 512);
+            const centerX = 256; const startY = 500; const endY = 50;
+            ctx.strokeStyle = '#3E2723'; ctx.lineWidth = 15; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(centerX, startY); ctx.lineTo(centerX, endY); ctx.stroke();
+            const needles = 800;
+            for (let i = 0; i < needles; i++) {
+                const t = Math.random(); const y = startY - t * (startY - endY);
+                const angle = -Math.PI / 2 + (Math.random() - 0.5) * 2.2;
+                const length = 60 + Math.random() * 80;
+                const x2 = centerX + Math.cos(angle) * length; const y2 = y + Math.sin(angle) * length;
+                const gradient = ctx.createLinearGradient(centerX, y, x2, y2);
+                gradient.addColorStop(0, '#0f3d0f'); gradient.addColorStop(0.6, '#2d6a2d'); gradient.addColorStop(1, '#5c9e5c');
+                ctx.strokeStyle = gradient; ctx.lineWidth = 4;
+                ctx.beginPath(); ctx.moveTo(centerX, y); ctx.lineTo(x2, y2); ctx.stroke();
+            }
+            return new THREE.CanvasTexture(canvas);
+        };
+
+        // --- 3. 球形闪烁粒子 ---
+        const SphericalSparkles = ({ count = 100, radius = 1, color = "#FFF", speed = 1 }) => {
+            const pointsRef = useRef();
+            const { positions, randoms } = useMemo(() => {
+                const positions = new Float32Array(count * 3);
+                const randoms = new Float32Array(count);
+                for (let i = 0; i < count; i++) {
+                    const theta = Math.random() * 2 * Math.PI;
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    const r = radius * Math.cbrt(Math.random());
+                    positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                    positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                    positions[i * 3 + 2] = r * Math.cos(phi);
+                    randoms[i] = Math.random();
+                }
+                return { positions, randoms };
+            }, [count, radius]);
+
+            const shaderMaterial = useMemo(() => {
+                return new THREE.ShaderMaterial({
+                    uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(color) }, uSpeed: { value: speed } },
+                    vertexShader: `
+                        uniform float uTime; uniform float uSpeed; attribute float aRandom; varying float vAlpha;
+                        void main() {
+                            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                            gl_Position = projectionMatrix * mvPosition;
+                            gl_PointSize = (10.0 * aRandom + 5.0) * (10.0 / -mvPosition.z);
+                            vAlpha = 0.5 + 0.5 * sin(uTime * uSpeed + aRandom * 10.0);
+                        }
+                    `,
+                    fragmentShader: `
+                        uniform vec3 uColor; varying float vAlpha;
+                        void main() {
+                            float r = distance(gl_PointCoord, vec2(0.5)); if (r > 0.5) discard;
+                            float glow = 1.0 - (r * 2.0); glow = pow(glow, 1.5); 
+                            gl_FragColor = vec4(uColor, vAlpha * glow);
+                        }
+                    `,
+                    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+                });
+            }, [color, speed]);
+
+            useFrame((state) => { if (pointsRef.current) pointsRef.current.material.uniforms.uTime.value = state.clock.elapsedTime; });
+
+            return (
+                <points ref={pointsRef}>
+                    <bufferGeometry>
+                        <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
+                        <bufferAttribute attach="attributes-aRandom" count={count} array={randoms} itemSize={1} />
+                    </bufferGeometry>
+                    <primitive object={shaderMaterial} attach="material" />
+                </points>
+            );
+        };
+
+        // --- 4. 数据生成 (底部加密版) ---
+        const COUNT = 2500;
+        const EXTRA_BOTTOM_COUNT = 350;
+        const tempObject = new THREE.Object3D();
+
+        const generateTreeData = () => {
+            const dataA = [], dataB = [], dataC = [];
+            // 循环1
+            for (let i = 0; i < COUNT; i++) {
+                const t = i / COUNT;
+                const angle = i * 137.5 * (Math.PI / 180);
+                const y = t * 20 - 10; const baseR = 7.0 * (1 - t); const layerWave = Math.sin(t * 25.0) * 0.8 * (1 - t);
+                const rand = Math.random(); let type, radiusOffset;
+                if (rand < 0.75) { type = 'A'; radiusOffset = 0.3 + Math.random() * 0.5; }
+                else if (rand < 0.90) { type = 'B'; radiusOffset = 0.4 + Math.random() * 0.4; }
+                else { type = 'C'; radiusOffset = 0.5 + Math.random() * 0.2; }
+                const r = baseR + layerWave + radiusOffset;
+                const x = r * Math.cos(angle); const z = r * Math.sin(angle);
+                const rx = (Math.random() - 0.5) * 80; const ry = (Math.random() - 0.5) * 80; const rz = (Math.random() - 0.5) * 80;
+                const item = { treePos: new THREE.Vector3(x, y, z), randomPos: new THREE.Vector3(rx, ry, rz), scale: 1, color: new THREE.Color() };
+                if (type === 'A') { item.scale = 2.0 + Math.random() * 1.5; item.color.lerpColors(new THREE.Color("#446644"), new THREE.Color("#88AA88"), Math.random()); dataA.push(item); }
+                else if (type === 'B') { item.scale = 0.6 + Math.random() * 0.4; item.color.set(Math.random() > 0.4 ? '#FFD700' : '#DC143C'); dataB.push(item); }
+                else { item.scale = 0.4; const colors = [0x00FFFF, 0xFF00AA, 0xFF9900, 0xFFFFFF]; item.color.setHex(colors[Math.floor(Math.random() * colors.length)]); dataC.push(item); }
+            }
+            // 循环2
+            for (let i = 0; i < EXTRA_BOTTOM_COUNT; i++) {
+                const t = Math.random() * 0.5;
+                const typeRand = Math.random(); let type, radiusOffset;
+                if (typeRand < 0.6) { type = 'B'; radiusOffset = 0.4 + Math.random() * 0.4; }
+                else { type = 'C'; radiusOffset = 0.5 + Math.random() * 0.2; }
+                const angle = i * 137.5 * (Math.PI / 180) + Math.random();
+                const y = t * 20 - 10; const baseR = 7.0 * (1 - t); const layerWave = Math.sin(t * 25.0) * 0.8 * (1 - t);
+                const r = baseR + layerWave + radiusOffset;
+                const x = r * Math.cos(angle); const z = r * Math.sin(angle);
+                const rx = (Math.random() - 0.5) * 80; const ry = (Math.random() - 0.5) * 80; const rz = (Math.random() - 0.5) * 80;
+                const item = { treePos: new THREE.Vector3(x, y, z), randomPos: new THREE.Vector3(rx, ry, rz), scale: 1, color: new THREE.Color() };
+                if (type === 'B') { item.scale = 0.6 + Math.random() * 0.4; item.color.set(Math.random() > 0.4 ? '#FFD700' : '#DC143C'); dataB.push(item); }
+                else { item.scale = 0.4; const colors = [0x00FFFF, 0xFF00AA, 0xFF9900, 0xFFFFFF]; item.color.setHex(colors[Math.floor(Math.random() * colors.length)]); dataC.push(item); }
+            }
+            return { dataA, dataB, dataC };
+        };
+
+        // --- 5. 树的粒子组件 ---
+        const ParticleGroup = ({ data, geometry, material, explosionFactor, rotateOnExplode = true }) => {
+            const meshRef = useRef(); const currentFactor = useRef(0);
+            useFrame((state, delta) => {
+                if (!meshRef.current) return;
+                currentFactor.current = THREE.MathUtils.damp(currentFactor.current, explosionFactor, 3, delta);
+                const t = currentFactor.current; let i = 0;
+                for (const item of data) {
+                    tempObject.position.lerpVectors(item.treePos, item.randomPos, t);
+                    if (rotateOnExplode) {
+                        const rotSpeed = t * 4.0;
+                        tempObject.rotation.set(item.randomPos.x * 0.1 * rotSpeed, item.randomPos.y * 0.1 * rotSpeed, item.randomPos.z * 0.1 * rotSpeed);
+                    } else {
+                        if (t < 0.1) { tempObject.rotation.set(item.randomPos.x, item.randomPos.y, item.randomPos.z); }
+                        else { tempObject.rotation.x += delta; tempObject.rotation.y += delta; }
+                    }
+                    tempObject.scale.setScalar(item.scale); tempObject.updateMatrix();
+                    meshRef.current.setMatrixAt(i, tempObject.matrix); meshRef.current.setColorAt(i, item.color); i++;
+                }
+                meshRef.current.instanceMatrix.needsUpdate = true;
+            });
+            return <instancedMesh ref={meshRef} args={[geometry, material, data.length]} />;
+        };
+
+        // --- 6. 星星组件 ---
+        const GorgeousStar = ({ explosionFactor }) => {
+            const groupRef = useRef();
+            const currentY = useRef(11.5);
+            const shape = useMemo(() => {
+                const s = new THREE.Shape(); const points = 5; const outerRadius = 2.2; const innerRadius = 0.8;
+                for (let i = 0; i < points * 2; i++) {
+                    const r = (i % 2 === 0) ? outerRadius : innerRadius; const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+                    s.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+                }
+                return s;
+            }, []);
+            const extrudeSettings = { depth: 0.1, bevelEnabled: true, bevelThickness: 0.8, bevelSize: 0.6, bevelSegments: 1 };
+            useFrame((state, delta) => {
+                if (groupRef.current) {
+                    groupRef.current.rotation.y += delta * 0.08;
+                    const targetY = 11.5 + (explosionFactor * 15);
+                    currentY.current = THREE.MathUtils.damp(currentY.current, targetY, 4, delta);
+                    groupRef.current.position.y = currentY.current;
+                    groupRef.current.rotation.z = THREE.MathUtils.damp(groupRef.current.rotation.z, explosionFactor * 0.5, 2, delta);
+                }
+            });
+            return (
+                <group ref={groupRef} position={[0, 11.5, 0]}>
+                    <mesh scale={[0.5, 0.5, 0.5]}>
+                        <extrudeGeometry args={[shape, extrudeSettings]} />
+                        <meshPhysicalMaterial color="#FFD700" emissive="#FFaa00" emissiveIntensity={0.3} metalness={1.0} roughness={0.05} clearcoat={1.0} reflectivity={1.0} flatShading={true} />
+                    </mesh>
+                    <SphericalSparkles count={360} radius={2.25} color="#FFFFA0" speed={2.0} />
+                    <pointLight position={[0, 2, 2]} intensity={8} color="#ffffff" distance={20} decay={2} />
+                </group>
+            );
+        };
+
+        // --- 7. 主场景 ---
+        const Scene = ({ explosionFactor }) => {
+            const { dataA, dataB, dataC } = useMemo(() => generateTreeData(), []);
+            const pineTexture = useMemo(() => createPineTexture(), []);
+            const leafGeo = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+            const leafMat = useMemo(() => new THREE.MeshStandardMaterial({
+                color: "#ffffff", map: pineTexture, alphaMap: pineTexture,
+                transparent: true, alphaTest: 0.1, side: THREE.DoubleSide,
+                roughness: 0.8, emissive: "#002200", emissiveIntensity: 0.5
+            }), [pineTexture]);
+            const sphereGeo = useMemo(() => new THREE.SphereGeometry(0.2, 24, 24), []);
+            const boxGeo = useMemo(() => new THREE.BoxGeometry(0.25, 0.25, 0.25), []);
+            const ornamentMat = useMemo(() => new THREE.MeshPhysicalMaterial({ roughness: 0.2, metalness: 1.0, clearcoat: 0.5 }), []);
+            const lightMat = useMemo(() => new THREE.MeshStandardMaterial({ emissiveIntensity: 4.0, toneMapped: false }), []);
+
+            const treeGroupRef = useRef();
+
+            useFrame((state, delta) => {
+                if (explosionFactor < 0.1 && treeGroupRef.current) {
+                    treeGroupRef.current.rotation.y += delta * 0.2;
+                }
+            });
+
+            return (
+                <>
+                    <Environment preset="park" background={false} blur={0.8} />
+                    <ambientLight intensity={1.0} color="#cceeff" />
+                    <spotLight position={[20, 50, 20]} angle={0.25} penumbra={1} intensity={3} castShadow />
+                    <pointLight position={[-10, 5, -10]} intensity={2} color="#aaddff" />
+                    <pointLight position={[0, -5, 5]} intensity={1.5} color="#55aa55" distance={15} />
+
+                    {/* 1. 静态背景层：苹果图案 (修改了大小和数量) */}
+                    <group position={[0, 0, -15]}>
+                        {/* scale 从 12 缩小到 9, count 从 5760 变为 4608 (4/5) */}
+                        <LightPointFigure position={[-25, 5, 0]} color="#FFFFFF" scale={[9, 9, 9]} count={4608} />
+                        <LightPointFigure position={[25, 5, 0]} color="#DC143C" scale={[9, 9, 9]} count={4608} />
+                    </group>
+
+                    {/* 2. 旋转层：圣诞树主体 */}
+                    <group ref={treeGroupRef} position={[0, -2, 0]}>
+                        <ParticleGroup data={dataA} geometry={leafGeo} material={leafMat} explosionFactor={explosionFactor} rotateOnExplode={false} />
+                        <ParticleGroup data={dataB} geometry={sphereGeo} material={ornamentMat} explosionFactor={explosionFactor} />
+                        <ParticleGroup data={dataC} geometry={boxGeo} material={lightMat} explosionFactor={explosionFactor} />
+                        <GorgeousStar explosionFactor={explosionFactor} />
+                    </group>
+
+                    {/* 3. 控制层 */}
+                    <OrbitControls makeDefault enableDamping minDistance={5} maxDistance={80} />
+                    <PerspectiveCamera makeDefault position={[0, 4, 35]} fov={50} />
+                </>
+            );
+        };
+
+        const App = () => {
+            const [explosionFactor, setExplosionFactor] = useState(0);
+
+            useEffect(() => {
+                const slider = document.getElementById('explode-slider');
+                const handleInput = (e) => setExplosionFactor(parseFloat(e.target.value));
+                slider.addEventListener('input', handleInput);
+                return () => slider.removeEventListener('input', handleInput);
+            }, []);
+
+            return (
+                <Canvas shadows dpr={[1, 2]} gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.3 }}>
+                    <Scene explosionFactor={explosionFactor} />
+                </Canvas>
+            );
+        };
+
+        const root = createRoot(document.getElementById('canvas-container'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
